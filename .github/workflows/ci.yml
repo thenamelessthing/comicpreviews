@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.2', '8.3', '8.4', '8.5']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@3209251719395a11279642c89c6fd159cdf5dc82
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: gd,rar,zip
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Validate Composer metadata
+        run: composer validate --strict
+
+      - name: Lint PHP
+        run: find lib tests -name '*.php' -print0 | xargs -0 -n1 php -l
+
+      - name: Run tests with ext-rar
+        run: vendor/bin/phpunit --configuration tests/phpunit.xml
+
+  unit-without-rar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@3209251719395a11279642c89c6fd159cdf5dc82
+        with:
+          php-version: '8.5'
+          extensions: gd,zip
+          coverage: none
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Validate Composer metadata
+        run: composer validate --strict
+
+      - name: Lint PHP
+        run: composer run lint
+
+      - name: Check coding standards
+        run: composer run cs:check
+
+      - name: Run Psalm
+        run: composer run psalm
+
+      - name: Run tests without ext-rar
+        run: vendor/bin/phpunit --configuration tests/phpunit.xml

@@ -1,0 +1,42 @@
+{
+  "name": "devnoname120/comicpreviews",
+  "description": "Bounded Nextcloud preview providers for CBZ and optional CBR archives",
+  "type": "project",
+  "license": "AGPL-3.0-or-later",
+  "require": {
+    "php": ">=8.2 <8.6",
+    "ext-zip": "*"
+  },
+  "require-dev": {
+    "friendsofphp/php-cs-fixer": "^3.95",
+    "nextcloud/coding-standard": "^1.3",
+    "phpunit/phpunit": "^11.5",
+    "psalm/phar": "^6.19"
+  },
+  "suggest": {
+    "ext-rar": "Enables CBR preview generation without external executables"
+  },
+  "autoload": {
+    "psr-4": {
+      "OCA\\Comicpreviews\\": "lib/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "OCA\\Comicpreviews\\Tests\\": "tests/"
+    }
+  },
+  "config": {
+    "platform": {
+      "php": "8.2"
+    },
+    "sort-packages": true
+  },
+  "scripts": {
+    "cs:check": "php-cs-fixer fix --dry-run --diff",
+    "cs:fix": "php-cs-fixer fix",
+    "lint": "find lib tests -name '*.php' -print0 | xargs -0 -n1 php -l",
+    "psalm": "psalm.phar --config=psalm.xml --no-cache --threads=1 --no-progress",
+    "test": "phpunit --configuration tests/phpunit.xml"
+  }
+}

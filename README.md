@@ -1,75 +1,98 @@
 # Comic Previews
 
-A Nextcloud preview provider for comic book archives in **CBZ** and **CBR** format.
+A bounded Nextcloud preview provider for **CBZ** archives and, when the optional PHP RAR extension is installed, **CBR** archives.
 
-The app registers a preview provider with Nextcloud so comic archives can display thumbnails in the Files interface and other places that use Nextcloud previews.
+The provider generates the normal Nextcloud file thumbnail from the first naturally ordered supported image in an archive. It does not schedule previews itself; Nextcloud or a preview-generation app remains responsible for invoking providers.
 
 ## Status
 
-This project is in early development. It has been tested with a personal library of 287 comic archives (285 CBR and 2 CBZ). Your results may vary with other archives.
+This fork replaces the original external `/usr/bin/unrar` integration with direct `ext-rar` streaming and adds adversarial tests and explicit resource limits. The original implementation was reported to work against 287 personal-library archives (285 CBR and 2 CBZ); representative RAR4 and RAR5 fixtures also succeeded here when tested with proprietary UnRAR. See [the implementation audit](docs/ORIGINAL_IMPLEMENTATION_AUDIT.md) for the portability and boundary failures found around that happy path.
 
 ## Requirements
 
 - Nextcloud 34 or newer
-- PHP ZIP extension (for CBZ files)
-- The `unrar` command-line utility (for CBR files)
-- A Nextcloud-supported image backend, such as GD or Imagick
+- PHP 8.2 through 8.5
+- PHP `zip` extension for CBZ previews
+- Optional PHP `rar` extension for CBR previews
+- A Nextcloud-supported image backend such as GD or Imagick
 
-CBR support requires `unrar` to be installed and executable by the PHP/Nextcloud process.
+No `unrar`, `7z`, Node.js, JavaScript runtime, or subprocess execution is used by the app.
 
 ## Installation
 
-The app is not yet packaged for the Nextcloud App Store. For now, install it manually:
+The app is not packaged for the Nextcloud App Store. For a manual installation:
 
-1. Copy the app directory into your Nextcloud `apps/` directory as `comicpreviews`.
-2. Ensure the web/PHP user can read the app files and execute `unrar`.
-3. Enable the app:
+1. Copy the repository into the Nextcloud `apps/` directory as `comicpreviews`.
+2. Install and enable PHP `ext-zip`.
+3. Install and enable PECL `ext-rar` on every PHP runtime that should generate CBR previews.
+4. Enable the app:
 
    ```bash
    sudo -u www-data php /var/www/nextcloud/occ app:enable comicpreviews
    ```
 
-4. Generate a preview for a test comic or let your existing preview-generation workflow process it.
+5. Generate a preview for a test comic, or let the existing preview workflow process it:
 
-Adjust the Nextcloud path and PHP user for your installation.
+   ```bash
+   sudo -u www-data php /var/www/nextcloud/occ preview:generate "/username/files/path/to/comic.cbz"
+   ```
 
-## Supported formats
+Adjust the Nextcloud path, PHP configuration, PHP user, and file path for the deployment.
 
-- **CBZ** — reads images from the ZIP archive.
-- **CBR** — lists and extracts images using `unrar`.
+## Supported formats and selection
 
-The provider selects an image from the archive to use as the preview. Password-protected archives and unusual archive layouts may not work.
+- **CBZ** through `ZipArchive`.
+- **CBR** through optional `ext-rar` for RAR4 and RAR5.
 
-## Preview generation
+JPEG, PNG, GIF, and WebP entries are candidates regardless of extension case. The encoded bytes determine the actual MIME type. Paths are normalized and compared using deterministic case-insensitive natural ordering with a bytewise tie-break, so `page-2.png` precedes `page-10.png`.
 
-This app provides the preview provider; it does not schedule preview generation itself. You can use Nextcloud's preview commands or a compatible preview-generation app to create previews in advance.
+Directories, hidden components, `__MACOSX`, absolute paths, drive paths, traversal components, NUL bytes, excessive nesting, unsupported image extensions, encrypted entries, and redirected RAR entries are rejected or ignored. If the selected first image is malformed or unsafe, preview generation fails closed rather than silently substituting a later page.
 
-Example:
+## Resource and archive boundaries
+
+Already-local archives are opened in place. Only encrypted or non-local Nextcloud files are copied to a temporary file, with a 1 GiB plus one-byte sentinel bound.
+
+| Boundary | Default |
+|---|---:|
+| Remote or encrypted temporary copy | 1 GiB |
+| Archive entries | 10,000 |
+| ZIP central directory | 16 MiB |
+| Entry path | 1,024 bytes and 16 components |
+| Selected encoded image | 32 MiB |
+| Compression ratio | 200:1 for entries of at least 1 MiB |
+| Solid-RAR prefix through the selected entry | 1 GiB declared unpacked |
+| Image dimensions | 8,192 pixels per axis |
+| Decoded image pixels | 16,777,216 |
+
+ZIP metadata is checked before libzip opens the archive. RAR4 and RAR5 main headers are checked before UnRAR opens the archive so multi-volume and header-encrypted files cannot trigger implicit sibling-volume access. The selected ZIP member is opened by numeric index, and the selected RAR member is retained by object identity. Entry streams, archive handles, and temporary files close on failure paths.
+
+The implementation scans bounded metadata and streams one selected entry rather than extracting an archive tree. See [the performance model and measured small-fixture results](docs/PERFORMANCE.md).
+
+## WebAssembly fallback
+
+A server-side WebAssembly fallback is deliberately not bundled. The available UnRAR WebAssembly builds target browser or Node.js JavaScript glue and an Emscripten virtual filesystem; PHP cannot invoke them directly. Mature PHP Wasm integration requires another native runtime extension, while the surveyed pure-PHP runtimes are new, incomplete for this workload, restricted to PHP 8.5, or orders of magnitude less appropriate for bounded preview generation.
+
+Adding such a fallback would therefore replace one optional native extension with a larger and less portable runtime stack while duplicating archive bytes into a Wasm filesystem. See [the detailed evaluation](docs/WASM_FALLBACK_EVALUATION.md).
+
+## Testing
 
 ```bash
-sudo -u www-data php /var/www/nextcloud/occ preview:generate "/username/files/path/to/comic.cbz"
+composer install
+vendor/bin/phpunit --configuration tests/phpunit.xml
 ```
 
-Replace the username and file path with a path valid for your Nextcloud installation.
+The no-extension run verifies that CBR support fails closed and is not registered. Run the same suite with `ext-rar` loaded to exercise real RAR4, RAR5, solid-RAR, ratio, size, and prefix-limit cases.
 
-## Security notes
+The committed fixtures contain only repository-owned test images or explicitly attributed third-party test material. They are not copyrighted comics.
 
-Only install this app from a source you trust. CBR preview generation invokes the external `unrar` utility, and archives may be untrusted input. Keep Nextcloud, PHP, and system packages up to date.
+## Security model
 
-## Development note
-
-This project was vibe-coded with the assistance of AI tools. The code has been tested against a personal library of 287 comic archives (285 CBR and 2 CBZ), but broader testing and community review are welcome.
-
-## Experimental status and security
-
-This project is experimental and has **not undergone an independent security audit**. Testing on one personal library does not guarantee compatibility, reliability, or security with all archives and environments.
-
-CBR preview generation invokes the external `unrar` utility and processes archive contents. Use caution with untrusted files, keep dependencies up to date, and review the code before deploying it in environments where security is critical.
+Archive contents are untrusted input. This implementation does not spawn archive utilities, extract archive trees, write selected entries to disk, or parse `ComicInfo.xml`. Unsupported, encrypted, multi-volume, malformed, inconsistent, or over-limit archives retain Nextcloud's generic file icon and produce a warning in the Nextcloud log.
 
 ## Contributing
 
-Issues and pull requests are welcome. Please include your Nextcloud version, PHP version, archive format (CBZ or CBR), and relevant logs when reporting a problem. Do not attach copyrighted comic archives.
+Include the Nextcloud version, PHP version, archive format, `ext-rar` version where relevant, and sanitized log messages in reports. Do not attach copyrighted comic archives.
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 or (at your option) any later version. See [LICENSE](LICENSE) for the full text.
+This fork incorporates code from the AGPL-licensed `devnoname120/epubviewer` preview pipeline and is therefore distributed under the GNU Affero General Public License v3.0 or later. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).
